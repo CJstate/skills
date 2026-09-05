@@ -48,10 +48,26 @@ def run_single_query(
     stream events (content_block_start) rather than waiting for the
     full assistant message, which only arrives after tool execution.
     """
+    # SECURITY: Sanitize skill_name to prevent path traversal.
+    # Only allow kebab-case names (lowercase, digits, hyphens) as enforced by quick_validate.py
+    import re
+    if not re.match(r'^[a-z0-9-]+$', skill_name):
+        raise ValueError(f"Invalid skill_name '{skill_name}': must be kebab-case (lowercase letters, digits, hyphens only)")
+    if skill_name.startswith('-') or skill_name.endswith('-') or '--' in skill_name:
+        raise ValueError(f"Invalid skill_name '{skill_name}': cannot start/end with hyphen or contain consecutive hyphens")
+    if len(skill_name) > 64:
+        raise ValueError(f"Invalid skill_name '{skill_name}': too long (max 64 characters)")
+
     unique_id = uuid.uuid4().hex[:8]
     clean_name = f"{skill_name}-skill-{unique_id}"
     project_commands_dir = Path(project_root) / ".claude" / "commands"
     command_file = project_commands_dir / f"{clean_name}.md"
+
+    # SECURITY: Ensure the command file stays within the intended directory
+    try:
+        command_file.resolve().relative_to(project_commands_dir.resolve())
+    except ValueError:
+        raise ValueError(f"Path traversal attempt detected in skill_name '{skill_name}'")
 
     try:
         project_commands_dir.mkdir(parents=True, exist_ok=True)
@@ -277,6 +293,19 @@ def main():
         sys.exit(1)
 
     name, original_description, content = parse_skill_md(skill_path)
+
+    # SECURITY: Validate skill name early using the same validation as quick_validate.py
+    import re
+    if not re.match(r'^[a-z0-9-]+$', name):
+        print(f"Error: Skill name '{name}' in SKILL.md must be kebab-case (lowercase letters, digits, hyphens only)", file=sys.stderr)
+        sys.exit(1)
+    if name.startswith('-') or name.endswith('-') or '--' in name:
+        print(f"Error: Skill name '{name}' in SKILL.md cannot start/end with hyphen or contain consecutive hyphens", file=sys.stderr)
+        sys.exit(1)
+    if len(name) > 64:
+        print(f"Error: Skill name '{name}' in SKILL.md is too long (max 64 characters)", file=sys.stderr)
+        sys.exit(1)
+
     description = args.description or original_description
     project_root = find_project_root()
 
